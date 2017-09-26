@@ -13,7 +13,8 @@
 
 (def product-create-stmt
   (str "CREATE TABLE IF NOT EXISTS tkl_product ("
-       "id uuid constraint tkl_product_pk primary key, name varchar)"))
+       "id uuid constraint tkl_product_pk primary key"
+       ", name varchar)"))
 
 (def create-user-stmt
   (str "CREATE TABLE IF NOT EXISTS tkl_user ("
@@ -83,7 +84,11 @@
   Throws an exception if more than one user was found."
   [db props constraints]
   (let [sql-params (cons (find-user-query props constraints) (map second constraints))]
-    (u/only (j/query db sql-params))))
+    (into
+      {}
+      (map (fn [[k v]]
+             [(keyword "user" (name k)) v]))
+      (u/only (j/query db sql-params)))))
 
 (s/fdef create-user!
   :args (s/cat :db ::spec/db :user (s/keys :req-un [:user/name :user/issuer :user/subject]))
@@ -118,14 +123,33 @@
       (update order :order/order-date time-coerce/from-date)
       order)))
 
+(defn namespacize-keys [row]
+ (into
+ {}
+ (map (fn [[k v]]
+        [(apply keyword (str/split (name k) #"_")) v]))
+   row))
+
+(s/fdef list-user-orders
+  :args (s/cat :db ::spec/db :user :takelist/user)
+  :ret (s/coll-of :takelist/order))
+
+(defn list-user-orders [db {user-id :user/id}]
+  ;time-coerce/from-date
+  ;:order/order-date
+  (->> (j/query db
+                ["SELECT amount order_amount, order_date, tkl_product.name product_name FROM tkl_order JOIN tkl_product ON product_id = tkl_product.id WHERE user_id = ?" user-id]
+                {:row-fn namespacize-keys})
+       (map #(update % :order/date time-coerce/from-date))))
+
 (s/fdef create-order!
   :args (s/cat :db ::spec/db
-               :user (s/keys :req-un [:user/id])
-               :product (s/keys :req-un [:product/id])
+               :user (s/keys :req [:user/id])
+               :product (s/keys :req [:product/id])
                :amount pos-int?)
   :ret :takelist/order)
 
-(defn create-order! [db {user-id :id} {product-id :id} amount]
+(defn create-order! [db {user-id :user/id} {product-id :product/id} amount]
   (let [order-id (UUID/randomUUID)
         order-date (time/now)]
     (j/insert! db "tkl_order"
@@ -136,3 +160,7 @@
             :user-id user-id
             :order-date order-date
             :amount amount}))
+
+(defn find-product [db id]
+  (first (j/query db ["select id as product_id, name as product_name from tkl_product where id = ?" id]
+                  {:row-fn namespacize-keys})))

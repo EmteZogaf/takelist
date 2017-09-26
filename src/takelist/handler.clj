@@ -2,10 +2,9 @@
   "Here are all our handlers."
   (:require [aleph.http :as http]
             [cheshire.core :as json]
-            [clj-time.core :as time]
-            [clj-time.format :as time-format]
             [clojure.java.jdbc :as j]
             [clojure.pprint :refer [pprint]]
+            [clojure.spec :as s]
             [clojure.string :as str]
             [environ.core :refer [env]]
             [hiccup.core :refer [html]]
@@ -16,6 +15,8 @@
             [takelist.middleware.products :refer [wrap-products]]
             [takelist.middleware.order :refer [wrap-store-order wrap-user-order]]
             [takelist.middleware.user :refer [wrap-user]]
+            [takelist.middleware.user-orders :refer [wrap-user-orders]]
+            [takelist.spec :as spec]
             [takelist.util :as u]))
 
 (defn head
@@ -70,7 +71,23 @@
     (for [{:keys [id name]} products]
       [:a {:class "list-group-item" :href (order-path path-for id)} name])]])
 
-(defn home-handler [{:keys [user path-for products]}]
+(defn- order-list [orders path-for]
+  [:div
+   [:h1 "Meine Bestellungen"]
+   [:table {:class "table table-striped"}
+    [:thead
+     [:tr
+      [:th "Produkt"]
+      [:th "Menge"]
+      [:th "Datum"]]]
+    [:tbody
+     (for [{:keys [order/amount product/name order/date]} orders]
+      [:tr
+       [:td name]
+       [:td amount]
+       [:td (u/to-date-time-str date)]])]]])
+
+(defn home-handler [{:keys [user path-for products user-orders]}]
   {:status 200
    :body
    (html
@@ -81,13 +98,18 @@
         [:div {:class "row"}
          [:div {:class "col-xs-4 col-xs-offset-4"}
           (if user
-            (product-list products path-for)
+            [:div
+             (product-list products path-for)
+             (order-list user-orders path-for)]
             [:button {:id "signinButton"} "Mit Google einloggen"])
           [:script
            "$('#signinButton').click(function() {
              // signInCallback defined in step 6.
               auth2.grantOfflineAccess({'redirect_uri': 'postmessage'}).then(signInCallback);
                 });"]]]]]])})
+
+(s/fdef order-form-handler
+  :args (s/cat :req (s/keys :req-un [:takelist/user :takelist/product])))
 
 (defn order-form-handler [{:keys [product user path-for]}]
   {:status 200
@@ -101,19 +123,14 @@
          [:div {:class "col-xs-12 col-xs-offset-0 col-sm-4 col-sm-offset-4"}
           [:form {:action "/post-order" :method "post"}
            [:div {:class "form-group"}
-            [:p (format "Hiermit bestelle ich (%s) %s." (:name user) (:name product))]
-            [:input {:type "hidden" :name "product-id" :value (:id product)}]]
+            [:p (format "Hiermit bestelle ich (%s) %s." (:user/name user) (:product/name product))]
+            [:input {:type "hidden" :name "product-id" :value (:product/id product)}]]
            [:div {:class "form-group"}
             [:label {:for "amount"} "Anzahl"]
             [:select {:id "amount" :name "amount" :class "form-control"}
              (for [x (range 1 6)]
                [:option {:value x} x])]]
            [:button {:type "submit" :class "btn btn-primary"} "Ok"]]]]]]])})
-
-(defn- to-time-str [date]
-  (-> (:hour-minute time-format/formatters)
-      (time-format/with-zone (time/time-zone-for-id "Europe/Berlin"))
-      (time-format/unparse date)))
 
 (defn order-post-handler [{:keys [path-for order]}]
   (r/redirect (str (path-for :order-confirmation) "?order-id=" (:order/id order))))
@@ -128,11 +145,11 @@
        [:p (format "Vielen Dank für das Bestellen von %s %s um %s Uhr."
                    (:order/amount order)
                    (:product/name (:order/product order))
-                   (to-time-str (:order/order-date order)))]
+                   (u/to-hour-minute-str (:order/order-date order)))]
        [:p [:a {:href (path-for :home)} "zurück"]]]])})
 
 (defn user-id [db {issuer :iss subject :sub name :name}]
-  (if-let [{:keys [id]} (db/find-user db [:id] {:issuer issuer :subject subject})]
+  (if-let [{:keys [user/id]} (db/find-user db [:user/id] {:user/issuer issuer :user/subject subject})]
     (do
       (db/update-user! db id {:name name})
       id)
@@ -179,6 +196,7 @@
 (defn handlers [{:keys [db] :as env}]
   (assert db)
   {:home (-> home-handler
+             (wrap-user-orders db)
              (wrap-products db)
              (wrap-user db))
    :order (-> order-form-handler

@@ -3,7 +3,7 @@
 
 (defn- find-user [db {:keys [user-id]}]
   (when user-id
-    (db/find-user db [:id :name] {:id user-id})))
+    (db/find-user db [:user/id :user/name] {:user/id user-id})))
 
 (defn wrap-user
   "Assocs :user to request if the session contains a :user-id."

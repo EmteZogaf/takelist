@@ -2,6 +2,8 @@
   (:require [buddy.core.codecs :as codecs]
             [buddy.core.codecs.base64 :as b64]
             [cheshire.core :as json]
+            [clj-time.core :as time]
+            [clj-time.format :as time-format]
             [clojure.spec :as s]
             [clojure.string :as str]
             [ring.util.response :as ring]
@@ -35,3 +37,14 @@
   (-> (ring/response msg)
       (ring/content-type "text/plain")
       (ring/status status)))
+
+(defn- to-time-str [formatter date]
+  (-> formatter
+      (time-format/with-zone (time/time-zone-for-id "Europe/Berlin"))
+      (time-format/unparse date)))
+
+(defn to-hour-minute-str [date]
+  (to-time-str (:hour-minute time-format/formatters) date))
+
+(defn to-date-time-str [date]
+  (to-time-str (time-format/formatter "dd.MM.yyyy HH:mm:ss") date))
